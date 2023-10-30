@@ -233,10 +233,10 @@ int main(int argc, char *argv[])
 {
     if (argc != 4)
     {
-        "Remember to specify the equation, initial condition, and method\n";
+        std::cout << "Remember to specify the equation, initial condition, and method\n";
         exit(1);
     }
-    std::cout << argv[1][0] << " " << argv[2] << " " << argv[3] << std::endl;
+    //std::cout << argv[1][0] << " " << argv[2] << " " << argv[3] << std::endl;
     // the first argument is the equation
     if (argv[1][0] == 'a') // advection
     {

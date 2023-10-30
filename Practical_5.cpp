@@ -25,9 +25,17 @@ double C = 0.8;
 double gas_coef = 1.8;
 int num_variables = 3;
 double v_l, v_r, rho_l, rho_r, p_l, p_r;
+bool use_halfstep = true;
 //define a vector to store discretised data
 vector<vector<double>> u; //u[0] and u[nPoints+1] are padding
 vector<vector<double>> f; //f[i] holds the flux from u[i] to u[i+1]
+vector<vector<double>> center_deltas;
+vector<vector<double>> between_deltas;
+vector<vector<double>> limiters;
+vector<vector<double>> u_left;
+vector<vector<double>> u_right;
+vector<vector<double>> uPlusOne_left;
+vector<vector<double>> uPlusOne_right;
 
 
 
@@ -93,6 +101,7 @@ vector<double> Richtmyer_flux(const vector<double> & velocity, const vector<doub
         velocity_half_step[i]= 0.5*(velocity[i] + velocity_next[i]);
         velocity_half_step[i] += (-0.5)*(d_t/d_x)*(f_right[i]-f_left[i]);
     }
+    //std::cout << velocity_half_step[0] << " " << velocity_half_step[1] << " " << velocity_half_step[2] << "\n";
     return flux(velocity_half_step);
 }
 
@@ -133,13 +142,28 @@ void set_initial_value(vector<vector<double>> &vel, int pad)
     boundary_condition(vel, pad);
 }
 
-void print_result(vector<vector<double>> data)
+void print_result(const vector<vector<double>> & data)
 {
     for (int i = 0; i < nPoints; i++)
     {
+        //std::cout << i << " ";
         for (int j = 0; j < num_variables; j++)
         {
+            //std::cout << j << " ";
             std::cout << data[i+padding][j] << " ";
+        }
+        std::cout << std::endl;
+    }
+    std::cout <<std::endl << std::endl;
+}
+
+void debug_result(const vector<vector<double>> & data)
+{
+    for (auto i = data.begin(); i != data.end(); i++)
+    {
+        for (int j = 0; j < num_variables; j++)
+        {
+            std::cout << (*i)[j] << " ";
         }
         std::cout << std::endl;
     }
@@ -186,6 +210,12 @@ vector<double> flux(const vector<double> & state)
     double E = state[2];
     double p = pressure(state);
 
+    if (rho == 0)
+    {
+        std::cout << "Zero density\n";
+        std::cout << rho << " " << rho_v << " " << E << "\n";
+        exit(2);
+    }
     result[0] = rho_v;
     result[1] = p + rho_v*rho_v/rho;
     result[2]= (E + p)*(rho_v/rho);
@@ -193,18 +223,90 @@ vector<double> flux(const vector<double> & state)
     return result;
 }
 
-void evaluate_flux(const vector<vector<double>> &vel, vector<vector<double>> &flu, double space_step, double time_step)
+void evaluate_flux(const vector<vector<double>> & values_left, const vector<vector<double>> & values_right, vector<vector<double>> &flu, double space_step, double time_step)
 {
     for (int i = 0; i < (nPoints + (2*padding) - 1); i++)
     {
-        //std::cout << i << std::endl;
-        flu[i] = nummerical_flux(vel[i], vel[i+1], space_step, time_step);
+        //std::cout << i << "\n";
+        //std::cout << values_left[i+1][0] << "\n";
+        flu[i] = nummerical_flux(values_right[i], values_left[i+1], space_step, time_step);
+    }
+}
+
+double (*limiter)(double r);
+
+double minbee(double r)
+{
+    if (r <= 0)
+    {
+        return 0.0;
+    }
+    else
+    {
+        if (r <= 1)
+        {
+            return r;
+        }
+        else
+        {
+            return (2.0 / (1.0 + r));
+        }
+    }
+}
+
+void find_deltas(const vector<vector<double>> & values, vector<vector<double>> & between, vector<vector<double>> & center)
+{
+    for (int i = 0; i < nPoints + (2*padding)-1; i++)
+    {
+        for (int j = 0; j < num_variables; j++)
+        {
+            //std::cout << i << " " << j <<"\n";
+            //std::cout << values[padding+i][j] << "\n";
+            //std::cout << values[padding+i-1][j] << "\n";
+            between[i][j] = (values[i+1][j] - values[i][j]);
+        } 
+    }
+    //std::cout << "Between\n";
+    for (int i = 1; i < nPoints + (2*padding)-1; i++)
+    {
+        for (int j = 0; j < num_variables; j++)
+        {
+            center[i][j] = (between[i][j] + between[i-1][j]) / 2.0;
+        } 
+    }
+}
+
+void find_limiters(const vector<vector<double>> & between, vector<vector<double>> & limiters)
+{
+    for (int i = 0; i < nPoints; i++)
+    {
+        for (int j = 0; j < num_variables; j++)
+        {
+            if (between[i + padding][j] != 0.0)
+            {
+                //std::cout << between[i + padding][j] << std::endl;
+                limiters[i + padding][j] = limiter(between[i + padding - 1][j] / between[i + padding][j]);
+            }
+            else
+            {
+                if (between[i + padding - 1][j] >= 0.0)
+                {
+                    limiters[i + padding][j] = 1;
+                }
+                else
+                {
+                    limiters[i + padding][j] = 0;
+                }
+            }
+        }
     }
 }
 
 int main(int argc, char *argv[])
 {
     nummerical_flux = FORCE_flux;
+    limiter = minbee;
+
     if (argc != 2)
     {
         std::cout << "Remember to specify the test case you are running\n";
@@ -282,14 +384,35 @@ int main(int argc, char *argv[])
 
     dx = (x1 - x0) / nPoints;
     u.resize(nPoints + 2*padding);
+    u_left.resize(nPoints + 2*padding);
+    u_right.resize(nPoints + 2*padding);
+    uPlusOne_left.resize(nPoints + 2*padding);
+    uPlusOne_right.resize(nPoints + 2*padding);
     f.resize(nPoints + 2*padding - 1);
+    center_deltas.resize(nPoints + 2*padding);
+    limiters.resize(nPoints + 2*padding);
+    between_deltas.resize(nPoints + 2*padding - 1);
 
     for (int i = 0; i < (nPoints+(2*padding)-1); i++)
     {
         u[i].resize(num_variables);
         f[i].resize(num_variables);
+        between_deltas[i].resize(num_variables);
+        limiters[i].resize(num_variables);
+        center_deltas[i].resize(num_variables);
+        u_left[i].resize(num_variables);
+        u_right[i].resize(num_variables);
+        uPlusOne_left[i].resize(num_variables);
+        uPlusOne_right[i].resize(num_variables);
     }
-    u[nPoints+(2*padding)-1].resize(3);
+    int last_index = nPoints+(2*padding)-1;
+    u[last_index].resize(num_variables);
+    limiters[last_index].resize(num_variables);
+    center_deltas[last_index].resize(num_variables);
+    u_left[last_index].resize(num_variables);
+    u_right[last_index].resize(num_variables);
+    uPlusOne_left[last_index].resize(num_variables);
+    uPlusOne_right[last_index].resize(num_variables);
 
     set_initial_value(u, padding);
     print_result(u);
@@ -299,6 +422,10 @@ int main(int argc, char *argv[])
     double dt;
     double a_max;
     int step = 1;
+    vector<double> flux_left, flux_right;
+    flux_left.resize(num_variables);
+    flux_right.resize(num_variables);
+    //tStop = 0.001;
     while (t < tStop)
     {
         a_max = maximal_v(u);
@@ -307,18 +434,55 @@ int main(int argc, char *argv[])
         if ((t + dt) > tStop)
         {
             dt = tStop - t;
+        }      
+
+        find_deltas(u, between_deltas, center_deltas);
+        //std::cout << "Deltas ";
+        find_limiters(between_deltas, limiters);
+        //std::cout << "limiters\n";
+        //print_result(limiters);
+
+        double  change;
+        for (int i = 0; i < nPoints; i++)
+        {
+            for (int j = 0; j < num_variables; j++)
+            {
+                change = limiters[i + padding][j] * center_deltas[i + padding][j] / 2.0;
+                u_left[i+padding][j] = u[i+padding][j] - change; 
+                u_right[i+padding][j] = u[i+padding][j] + change;
+            }
         }
-        // if (step % 100 == 1)
-        // {
-        //     std::cout << "Running "<< step << "th step, t = " << t << " dt = " << dt << std::endl;
-        // }
-        
-        evaluate_flux(u, f, dx, dt);
+
+        if (use_halfstep)
+        {
+            for (int i = 0; i < nPoints; i++)
+            {
+                flux_left = flux(u_left[i + padding]);
+                flux_right = flux(u_right[i + padding]);
+                for (int j = 0; j < num_variables; j++)
+                {
+                    change = (flux_right[j] - flux_left[j]) * dt / dx / 2.0;
+                    uPlusOne_left[i+padding][j] = u_left[i+padding][j] - change;
+                    uPlusOne_right[i+padding][j] = u_right[i+padding][j] - change;
+                }
+            }
+            u_left = uPlusOne_left;
+            u_right = uPlusOne_right;  
+        }
+        boundary_condition(u_left, padding);
+        boundary_condition(u_right, padding);
+        //debug_result(u_left);
+        //debug_result(u_right);
+
+        evaluate_flux(u_left, u_right, f, dx, dt);
+
+        //debug_result(f);
 
         //std::cout << "Flux evaluated\n";
 
         u = PDE_Step(u, f, dt, padding);
 
+        //print_result(u);
         //std::cout << "PDE Step done\n";
 
         t = t + dt;
