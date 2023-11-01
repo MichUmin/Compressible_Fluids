@@ -13,7 +13,7 @@ using std::string;
 
 const double pi = 3.14159265358979311600;
 
-int nPoints = 100;
+int nPoints = 1000;
 int padding = 1;
 double x0 = 0;
 double x1 = 1;
@@ -24,6 +24,7 @@ double dx = (x1 - x0)/nPoints;
 double C = 0.8;
 double gas_coef = 1.8;
 int num_variables = 3;
+int step = 0;
 double v_l, v_r, rho_l, rho_r, p_l, p_r;
 bool use_halfstep = true;
 //define a vector to store discretised data
@@ -67,7 +68,7 @@ vector<vector<double>> PDE_Step(const vector<vector<double>> &current, const vec
     {
         for (int j = 0; j < num_variables; j++)
         {
-            uPlus1[index][j] = current[index][j] - ((time_step/dx)*(flux[index][j] - flux[index-1][j]));
+            uPlus1[index][j] = current[index][j] - ((time_step / dx)*(flux[index][j] - flux[index-1][j]));
         }
     }
     boundary_condition(uPlus1, pad);
@@ -85,7 +86,7 @@ vector<double> Lax_Friedrichs_flux(const vector<double> & velocity, const vector
         result[i] = (d_x / d_t)*(velocity[i] - velocity_next[i]);
         result[i] += f_left[i];
         result[i] += f_right[i];
-        result[i] = result[i] / 2;
+        result[i] = result[i] / 2.0;
     }
     return result;
 }
@@ -119,9 +120,9 @@ vector<double> FORCE_flux(const vector<double> & velocity, const vector<double> 
 void set_initial_value(vector<vector<double>> &vel, int pad)
 {
     double rho_v_l = rho_l*v_l;
-    double E_l = p_l/(gas_coef - 1) + (rho_l*v_l*v_l/2);
+    double E_l = p_l/(gas_coef - 1.0) + (rho_l*v_l*v_l/2.0);
     double rho_v_r = rho_r*v_r;
-    double E_r = p_r/(gas_coef - 1) + (rho_r*v_r*v_r/2);
+    double E_r = p_r/(gas_coef - 1.0) + (rho_r*v_r*v_r/2.0);
     double x;
     double integral = 0;
     for (int i = 0; i <= nPoints/2 ; i ++)
@@ -174,14 +175,59 @@ double pressure(const vector<double> & state)
 {
     double rho_v = state[1];
     double rho = state[0];
-    return ((gas_coef - 1)*(state[2] - (rho_v*rho_v)/(2*rho)));
+    double E = state[2];
+    double p;
+    if (rho <= 0.0001)
+    {
+        /*
+        std::cout << "Zero density when calculating the pressure\n";
+        std::cout << rho << " " << rho_v << "\n";
+        exit(2);
+        */
+       p = ((gas_coef - 1)*E);
+    }
+    else
+    {
+        p = ((gas_coef - 1)*(E - (rho_v*rho_v)/(2*rho)));
+    }
+    /*
+    if (p < 0.0)
+    {
+        debug_result(u);
+        debug_result(u_left);
+        debug_result(u_right);
+        std::cout << "Negative pressure\n";
+        std::cout << "p = " << p << " E = " << E << " rho_v = " << rho_v << " rho = " << rho << " step = " << step << "\n";
+        exit(3);
+    }
+    */
+    return p;
 }
 
 double speed_of_sound(const vector<double> & state)
 {
     double rho = state[0];
+    if (rho == 0)
+    {
+        std::cout << "Zero density when calculating the speed of sound\n";
+        std::cout << rho << "\n";
+        exit(2);
+    }
     double p = pressure(state);
-    return (sqrt(gas_coef*p/rho));
+    if (p < 0.0)
+    {
+        /*
+        debug_result(u);
+        std::cout << "Negative pressure when calculating the speed of sound\n";
+        std::cout << p << "\n";
+        exit(3);
+        */
+       return 0.0;
+    }
+    else
+    {
+        return (sqrt(gas_coef*p/rho));
+    }
 }
 
 double maximal_v(const vector<vector<double>>& values)
@@ -209,16 +255,25 @@ vector<double> flux(const vector<double> & state)
     double rho_v = state[1];
     double E = state[2];
     double p = pressure(state);
+    double v;
 
-    if (rho == 0)
+    result[0] = rho_v;
+    if (rho <= 0.00001)
     {
+        /*
         std::cout << "Zero density\n";
         std::cout << rho << " " << rho_v << " " << E << "\n";
         exit(2);
+        */
+       result[1] = p;
+       result[2] = 0;
     }
-    result[0] = rho_v;
-    result[1] = p + rho_v*rho_v/rho;
-    result[2]= (E + p)*(rho_v/rho);
+    else
+    {
+        v = rho_v / rho;
+        result[1] = p + rho_v*v;
+        result[2]= (E + p)*v;
+    }
     
     return result;
 }
@@ -237,13 +292,13 @@ double (*limiter)(double r);
 
 double minbee(double r)
 {
-    if (r <= 0)
+    if (r <= 0.0)
     {
         return 0.0;
     }
     else
     {
-        if (r <= 1)
+        if ((r <= 1.0)&&(r > 0.0))
         {
             return r;
         }
@@ -254,6 +309,57 @@ double minbee(double r)
     }
 }
 
+double zero_limiter(double r)
+{
+    return 0.0;
+}
+
+double superbee(double r)
+{
+    if (r <= 0.0)
+    {
+        return 0.0;
+    }
+    else
+    {
+        if (r <= 0.5)
+        {
+            return 2.0*r;
+        }
+        else
+        {
+            if (r <= 1)
+            {
+                return 1.0;
+            }
+            else
+            {
+                return (2.0 / (1.0 + r));
+            }
+        }
+    }
+}
+
+double Van_Leer(double r)
+{
+    if (r <= 0.0)
+    {
+        return 0.0;
+    }
+    else
+    {
+        if (r <= 1.0)
+        {
+            return ((2.0 * r) / (1.0 + r));
+        }
+        else
+        {
+            return (2.0 / (1.0 + r));
+        }
+    }
+}
+
+/*
 void find_deltas(const vector<vector<double>> & values, vector<vector<double>> & between, vector<vector<double>> & center)
 {
     for (int i = 0; i < nPoints + (2*padding)-1; i++)
@@ -274,9 +380,35 @@ void find_deltas(const vector<vector<double>> & values, vector<vector<double>> &
             center[i][j] = (between[i][j] + between[i-1][j]) / 2.0;
         } 
     }
+    for (int j = 0; j < num_variables; j++)
+    {
+        center[0][j] = 0.0;
+        center[nPoints + (2*padding) - 1][j] = 0.0;
+    }
+}
+*/
+void find_deltas(const vector<vector<double>> & values, vector<vector<double>> & between, vector<vector<double>> & center)
+{
+    for (int i = 1; i < nPoints + (2*padding)-1; i++)
+    {
+        for (int j = 0; j < num_variables; j++)
+        {
+            //std::cout << i << " " << j <<"\n";
+            //std::cout << values[padding+i][j] << "\n";
+            //std::cout << values[padding+i-1][j] << "\n";
+            center[i][j] = 0.5*(values[i+1][j] - values[i-1][j]);
+        } 
+    }
+    for (int j = 0; j < num_variables; j++)
+    {
+        center[0][j] = 0.0;
+        center[nPoints + (2*padding) - 1][j] = 0.0;
+    }
 }
 
-void find_limiters(const vector<vector<double>> & between, vector<vector<double>> & limiters)
+void (*find_limiters)(const vector<vector<double>> & between, vector<vector<double>> & limiters);
+
+void find_limiters_separate(const vector<vector<double>> & between, vector<vector<double>> & limiters)
 {
     for (int i = 0; i < nPoints; i++)
     {
@@ -291,7 +423,7 @@ void find_limiters(const vector<vector<double>> & between, vector<vector<double>
             {
                 if (between[i + padding - 1][j] >= 0.0)
                 {
-                    limiters[i + padding][j] = 1;
+                    limiters[i + padding][j] = 0;
                 }
                 else
                 {
@@ -300,12 +432,142 @@ void find_limiters(const vector<vector<double>> & between, vector<vector<double>
             }
         }
     }
+    for (int i = 0; i < padding; i++)
+    {
+        for (int j = 0; j < num_variables; j++)
+        {
+            limiters[i][j] = 0.0;
+            limiters[i + nPoints + padding][j] = 0.0;
+        }
+    }
+}
+
+
+void find_limiters_min(const vector<vector<double>> & values, vector<vector<double>> & limiters)
+{
+    double r;
+    for (int i = padding; i < nPoints+padding; i++)
+    {
+        for (int j = 0; j < num_variables; j++)
+        {
+            if (values[i+1][j] != values[i][j])
+            {
+                //std::cout << between[i + padding][j] << std::endl;
+                r = ((values[i][j] - values[i-1][j]) / (values[i+1][j] - values[i][j]));
+                limiters[i][j] = limiter(r);
+            }
+            else
+            {
+                limiters[i][j] = 0.0;
+            }
+        }
+    }
+    for (int i = 0; i < padding; i++)
+    {
+        for (int j = 0; j < num_variables; j++)
+        {
+            limiters[i][j] = 0.0;
+            limiters[i + nPoints + padding][j] = 0.0;
+        }
+    }
+    double minimum;
+    for (int i = 0; i < nPoints + 2*padding; i++)
+    {
+        minimum = 0.0;
+        for (int j = 0; j < num_variables; j++)
+        {
+            if (limiters[i][j] < minimum)
+            {
+                minimum = limiters[i][j];
+            }
+        }
+        for (int j = 0; j < num_variables; j++)
+        {
+            limiters[i][j] = minimum;
+        }
+    }
+}
+
+void find_limiters_avg(const vector<vector<double>> & values, vector<vector<double>> & limiters)
+{
+    double r;
+    for (int i = padding; i < nPoints+padding; i++)
+    {
+        for (int j = 0; j < num_variables; j++)
+        {
+            if (values[i+1][j] != values[i][j])
+            {
+                //std::cout << between[i + padding][j] << std::endl;
+                r = ((values[i][j] - values[i-1][j]) / (values[i+1][j] - values[i][j]));
+                limiters[i][j] = limiter(r);
+            }
+            else
+            {
+                limiters[i][j] = 0.0;
+            }
+        }
+    }
+    for (int i = 0; i < padding; i++)
+    {
+        for (int j = 0; j < num_variables; j++)
+        {
+            limiters[i][j] = 0.0;
+            limiters[i + nPoints + padding][j] = 0.0;
+        }
+    }
+    double sum;
+    for (int i = 0; i < nPoints + 2*padding; i++)
+    {
+        sum = 0.0;
+        for (int j = 0; j < num_variables; j++)
+        {
+
+            sum += limiters[i][j];
+        }
+        for (int j = 0; j < num_variables; j++)
+        {
+            limiters[i][j] = sum/num_variables;
+        }
+    }
+}
+
+void find_limiters_energy(const vector<vector<double>> & values, vector<vector<double>> & limiters)
+{
+    double r;
+    double val;
+    for (int i = padding; i < nPoints+padding; i++)
+    {
+        if (values[i+1][3] != values[i][3])
+            {
+                //std::cout << between[i + padding][j] << std::endl;
+                r = ((values[i][3] - values[i-1][3]) / (values[i+1][3] - values[i][3]));
+                val = limiter(r);
+            }
+            else
+            {
+                val = 0.0;
+            }
+        for (int j = 0; j < num_variables; j++)
+        {
+            limiters[i][j] = val;
+        }
+    }
+    for (int i = 0; i < padding; i++)
+    {
+        for (int j = 0; j < num_variables; j++)
+        {
+            limiters[i][j] = 0.0;
+            limiters[i + nPoints + padding][j] = 0.0;
+        }
+    }
 }
 
 int main(int argc, char *argv[])
 {
     nummerical_flux = FORCE_flux;
-    limiter = minbee;
+    //limiter = zero_limiter;
+    limiter = Van_Leer;
+    find_limiters = find_limiters_energy;
 
     if (argc != 2)
     {
@@ -421,11 +683,10 @@ int main(int argc, char *argv[])
     double t = tStart;
     double dt;
     double a_max;
-    int step = 1;
+    step = 1;
     vector<double> flux_left, flux_right;
     flux_left.resize(num_variables);
     flux_right.resize(num_variables);
-    //tStop = 0.001;
     while (t < tStop)
     {
         a_max = maximal_v(u);
@@ -438,21 +699,25 @@ int main(int argc, char *argv[])
 
         find_deltas(u, between_deltas, center_deltas);
         //std::cout << "Deltas ";
-        find_limiters(between_deltas, limiters);
+        //find_limiters(between_deltas, limiters);
+        find_limiters(u, limiters);
         //std::cout << "limiters\n";
-        //print_result(limiters);
+        //debug_result(limiters);
 
         double  change;
-        for (int i = 0; i < nPoints; i++)
+        for (int i = 0; i < (nPoints + (2*padding)); i++)
         {
             for (int j = 0; j < num_variables; j++)
             {
-                change = limiters[i + padding][j] * center_deltas[i + padding][j] / 2.0;
-                u_left[i+padding][j] = u[i+padding][j] - change; 
-                u_right[i+padding][j] = u[i+padding][j] + change;
+                change = 0.5*(limiters[i][j] * center_deltas[i][j]);
+                //std::cout << change << " ";
+                u_left[i][j] = u[i][j] - change; 
+                u_right[i][j] = u[i][j] + change;
             }
+            //std::cout << std::endl;
         }
-
+        //debug_result(u);
+        //debug_result(u_left);
         if (use_halfstep)
         {
             for (int i = 0; i < nPoints; i++)
@@ -466,11 +731,21 @@ int main(int argc, char *argv[])
                     uPlusOne_right[i+padding][j] = u_right[i+padding][j] - change;
                 }
             }
+            for (int i = 0; i < padding; i++)
+            {
+                for (int j = 0; j < num_variables; j++)
+                {
+                    uPlusOne_left[i][j] = u_left[i][j];
+                    uPlusOne_right[i][j] = u_right[i][j];
+                    uPlusOne_right[nPoints+padding + i][j] = u_right[nPoints+padding+i][j];
+                    uPlusOne_left[nPoints+padding + i][j] = u_left[nPoints+padding+i][j];
+                }
+            }
             u_left = uPlusOne_left;
             u_right = uPlusOne_right;  
         }
-        boundary_condition(u_left, padding);
-        boundary_condition(u_right, padding);
+        //boundary_condition(u_left, padding);
+        //boundary_condition(u_right, padding);
         //debug_result(u_left);
         //debug_result(u_right);
 
@@ -490,5 +765,6 @@ int main(int argc, char *argv[])
     }
 
     print_result(u);
+    //debug_result(u);
     return 0;
 }
