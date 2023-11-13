@@ -22,7 +22,7 @@ double tStop;
 double a = 1;
 double dx = (x1 - x0)/nPoints;
 double C = 0.8;
-double gas_coef = 1.8;
+double gas_coef = 1.4;
 int num_variables = 3;
 double v_l, v_r, rho_l, rho_r, p_l, p_r;
 //define a vector to store discretised data

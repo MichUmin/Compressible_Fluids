@@ -13,7 +13,7 @@ using std::string;
 
 const double pi = 3.14159265358979311600;
 
-int nPoints = 1000;
+int nPoints = 100;
 int padding = 1;
 double x0 = 0;
 double x1 = 1;
@@ -22,7 +22,7 @@ double tStop;
 double a = 1;
 double dx = (x1 - x0)/nPoints;
 double C = 0.8;
-double gas_coef = 1.8;
+double gas_coef = 1.4;
 int num_variables = 3;
 int step = 0;
 double v_l, v_r, rho_l, rho_r, p_l, p_r;
@@ -190,17 +190,19 @@ double pressure(const vector<double> & state)
     {
         p = ((gas_coef - 1)*(E - (rho_v*rho_v)/(2*rho)));
     }
-    /*
+    
     if (p < 0.0)
     {
+        /*
         debug_result(u);
         debug_result(u_left);
         debug_result(u_right);
         std::cout << "Negative pressure\n";
         std::cout << "p = " << p << " E = " << E << " rho_v = " << rho_v << " rho = " << rho << " step = " << step << "\n";
+        */
         exit(3);
     }
-    */
+    
     return p;
 }
 
@@ -537,10 +539,10 @@ void find_limiters_energy(const vector<vector<double>> & values, vector<vector<d
     double val;
     for (int i = padding; i < nPoints+padding; i++)
     {
-        if (values[i+1][3] != values[i][3])
+        if (values[i+1][num_variables-1] != values[i][num_variables-1])
             {
                 //std::cout << between[i + padding][j] << std::endl;
-                r = ((values[i][3] - values[i-1][3]) / (values[i+1][3] - values[i][3]));
+                r = ((values[i][num_variables] - values[i-1][num_variables-1]) / (values[i+1][num_variables-1] - values[i][num_variables-1]));
                 val = limiter(r);
             }
             else
@@ -695,7 +697,8 @@ int main(int argc, char *argv[])
         if ((t + dt) > tStop)
         {
             dt = tStop - t;
-        }      
+        }     
+        //std::cout << dt << std::endl; 
 
         find_deltas(u, between_deltas, center_deltas);
         //std::cout << "Deltas ";
