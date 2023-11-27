@@ -13,14 +13,12 @@ using std::string;
 
 const double pi = 3.14159265358979311600;
 
-int nPoints = 100;
-int padding = 1;
-int nGhost = 3*padding;
+int nPoints = 400;
+int padding = 3;
 double x0 = 0;
 double x1 = 1;
 double tStart = 0.0;
 double tStop;
-double a = 1;
 double dx = (x1 - x0)/nPoints;
 double C = 0.8;
 vector<double> gas_coef = {1.4, 1.4};
@@ -39,6 +37,9 @@ vector<vector<double>> u_minus;
 vector<vector<double>> u_plus;
 vector<double> level_set;
 
+vector<double> conservative_to_primitive(int, const vector<double> &);
+
+vector<double> primitive_to_conservative(int, const vector<double> &);
 
 void boundary_condition(vector<vector<double>> &values)
 {
@@ -102,11 +103,11 @@ void print_result(const vector<vector<double>> & data_inside, const vector<vecto
 {
     for (int i = 0; i < nPoints; i++)
     {
+        std::cout << level_set[i+padding] << " ";
         if (level_set[i+padding] < 0.0)
         {
             for (int j = 0; j < num_variables; j++)
             {
-                //std::cout << j << " ";
                 std::cout << data_inside[i+padding][j] << " ";
             }
         }
@@ -114,7 +115,6 @@ void print_result(const vector<vector<double>> & data_inside, const vector<vecto
         {
             for (int j = 0; j < num_variables; j++)
             {
-                //std::cout << j << " ";
                 std::cout << data_outside[i+padding][j] << " ";
             }
         }
@@ -123,13 +123,15 @@ void print_result(const vector<vector<double>> & data_inside, const vector<vecto
     std::cout <<std::endl << std::endl;
 }
 
-void debug_result(const vector<vector<double>> & data)
+void debug_result(int material, const vector<vector<double>> & data)
 {
+    vector<double> help_primitive;
     for (auto i = data.begin(); i != data.end(); i++)
     {
+        help_primitive = conservative_to_primitive(material, (*i));
         for (int j = 0; j < num_variables; j++)
         {
-            std::cout << (*i)[j] << " ";
+            std::cout << help_primitive[j] << " ";
         }
         std::cout << std::endl;
     }
@@ -147,12 +149,23 @@ double vec_len(const vector<double> & v)
     return (sqrt(result));
 }
 
-double pressure(int material, vector<double> & state)
+double power(double base, double exponent)
+{
+    if (base < 0.0)
+    {
+        std::cout << "negative power" << base << "^" << exponent << "\n";
+        std::cout << step << std::endl;
+        exit(2);
+    }
+    else
+    return (pow(base, exponent));
+}
+
+double pressure(int material, const vector<double> & state)
 {
     double rho = state[0];
     double E = state[num_variables-1];
     double v;
-    v.resize(3);
     double p;
     if (rho == 0.0)
     {
@@ -165,7 +178,7 @@ double pressure(int material, vector<double> & state)
     else
     {
         v = state[1]/rho;
-        p = ((gas_coef[material] - 1)*(E - (square(v))*rho*0.5));
+        p = ((gas_coef[material] - 1)*(E - (v*v*rho*0.5)));
     }
     /*
     if (p < 0.0)
@@ -187,7 +200,7 @@ double speed_of_sound(int material, const vector<double> & state)
         std::cout << rho << "\n";
         exit(2);
     }
-    double p = pressure(state);
+    double p = pressure(material, state);
     if (p < 0.0)
     {
         /*
@@ -218,9 +231,105 @@ double speed(const vector<double> & state)
     }
 }
 
-double maximal_v(const vector<vector<double>>& values_inside, const vector<vector<double>>& values_outside)
+vector<double> conservative_to_primitive(int material, const vector<double> & state)
 {
-    int number = values.size();
+    vector<double> result;
+    result.resize(num_variables);
+    result[0] = state[0]; //rho
+    result[1] = speed(state);
+    result[2] = pressure(material, state);
+    return result;
+}
+
+vector<double> primitive_to_conservative(int material, const vector<double> & state)
+{
+    vector<double> result;
+    result.resize(num_variables);
+    result[0] = state[0]; //rho
+    result[1] = state[0]*state[1]; // rho*v
+    result[2] = (state[2]/(gas_coef[material] - 1)) + (state[0]*state[1]*state[1]*0.5); // rho*epsilon + 0.5*rho*v^2
+    return result;
+}
+
+void EvaluateGhostCells(int index, vector<vector<double>>& values_left, int material_left, vector<vector<double>>& values_right, int material_right)
+{
+    // index holds the position of the last cell in the left material
+    if ((index < padding)||(index >= nPoints+padding))
+    {
+        std::cout << "You cannot insert ghost cells here: " << index << std::endl;
+    }
+    vector<double> last_conservative;
+    last_conservative = values_left[index];
+    //std::cout << "copied state\n";
+    vector<double> last_primitive;
+    last_primitive = conservative_to_primitive(material_left, last_conservative);
+    //std::cout << "converted\n";
+    vector<double> real, fake;
+    real.resize(3);
+    fake.resize(3);
+    double entropy = last_primitive[2] / power(last_primitive[0], gas_coef[material_left]);
+    for (int i = 1; i <= padding; i++)
+    {
+        if (level_set[index]*level_set[index+i] <= 0.0)
+        {
+            //std::cout << "Adding a ghost cell\n";
+            real = conservative_to_primitive(material_right, values_right[index+i]);
+            fake[1] = real[1];
+            fake[2] = real[2];
+            fake[0] = fake[2] / entropy;
+            fake[0] = pow(fake[0], 1.0 / gas_coef[material_left]);
+            values_left[index+i] = primitive_to_conservative(material_left, fake);
+        }
+        else
+        {
+            std::cout << "You hit the same material again\n";
+        }
+    }
+    last_conservative = values_right[index+1];
+    last_primitive = conservative_to_primitive(material_right, last_conservative);
+    entropy = last_primitive[2] / pow(last_primitive[0], gas_coef[material_right]);
+    for (int i = 0; i < padding; i++)
+    {
+        if (level_set[index+1]*level_set[index-i] <= 0.0)
+        {
+            //std::cout << "Adding a ghost cell\n";
+            real = conservative_to_primitive(material_left, values_left[index-i]);
+            fake[1] = real[1];
+            fake[2] = real[2];
+            fake[0] = fake[2] / entropy;
+            fake[0] = power(fake[0], 1.0 / gas_coef[material_right]);
+            values_right[index-i] = primitive_to_conservative(material_right, fake);
+        }
+        else
+        {
+            std::cout << "You hit the same material again\n";
+        }
+    }
+}
+
+void FindGhostCells(vector<vector<double>>& values_inside, int material_inside, vector<vector<double>>& values_outside, int material_outside)
+{
+    for (int index = padding; index < nPoints+padding-1; index++)
+    {
+        if (level_set[index]*level_set[index+1] <= 0.0)
+        {
+            //std::cout << "Located boundary at " << index << "\n";
+            if (level_set[index] <= 0.0)
+            {
+                EvaluateGhostCells(index, values_inside, material_inside, values_outside, material_outside);
+            }
+            else
+            {
+                EvaluateGhostCells(index, values_outside, material_outside, values_inside, material_inside);
+            }
+        }
+    }
+
+}
+
+double maximal_v(const vector<vector<double>>& values_inside, int material_inside, const vector<vector<double>>& values_outside, int material_outside)
+{
+    int number = values_inside.size();
     double result = 0;
     double v_c;
     for (int i = padding; i < number-padding; i++)
@@ -228,12 +337,12 @@ double maximal_v(const vector<vector<double>>& values_inside, const vector<vecto
         if (level_set[i] < 0.0)
         {
             v_c = speed(values_inside[i]);
-            v_c = abs(v_c) + speed_of_sound(values_inside[i]);
+            v_c = abs(v_c) + speed_of_sound(material_inside, values_inside[i]);
         }
         else
         {
             v_c = speed(values_outside[i]);
-            v_c = abs(v_c) + speed_of_sound(values_outside[i]);
+            v_c = abs(v_c) + speed_of_sound(material_outside, values_outside[i]);
         }
         if (v_c > result)
         {
@@ -241,16 +350,16 @@ double maximal_v(const vector<vector<double>>& values_inside, const vector<vecto
         }
         if (level_set[i]*level_set[i+1] < 0.0)
         {
-            for (int j = i - nGhost + 1; j <= i+nGhost; j++)
+            for (int j = i - padding + 1; j <= i+padding; j++)
             {
                 v_c = speed(values_outside[j]);
-                v_c = abs(v_c) + speed_of_sound(values_outside[j]);
+                v_c = abs(v_c) + speed_of_sound(material_outside, values_outside[j]);
                 if (v_c > result)
                 {
                     result = v_c;
                 }
                 v_c = speed(values_inside[j]);
-                v_c = abs(v_c) + speed_of_sound(values_inside[j]);
+                v_c = abs(v_c) + speed_of_sound(material_inside, values_inside[j]);
                 if (v_c > result)
                 {
                     result = v_c;
@@ -362,7 +471,59 @@ double Van_Leer(double r)
         }
     }
 }
-void update_level_set_function(const vector<vector<double>> & inside_state, const vector<vector<double>> & outside_state, double time_step, double space_step)
+double (*initial_level_set)(double);
+
+double inside_on_the_left(double x)
+{
+    return (x - 0.5);
+}
+
+double helium_inside(double x)
+{
+    if (x <= 0.5)
+    {
+        return (0.4 - x);
+    }
+    else
+    {
+        return (x - 0.6);
+    }
+}
+
+void set_initial_helium()
+{
+    gas_coef = {1.67, 1.4};
+    double x;
+    vector<double> left, right, helium, help;
+    help.resize(3);
+    help[0] = 1.3765;
+    help[1] = 0.3948;
+    help[2] = 1.57;
+    left = primitive_to_conservative(1, help);
+    help[0] = 1.0;
+    help[1] = 0.0;
+    help[2] = 1.0;
+    right = primitive_to_conservative(1, help);
+    help[0] = 0.138;
+    helium = primitive_to_conservative(0, help);
+
+    for (int index = 0; index < nPoints +2*padding; index++)
+    {
+        x = (index - padding)*dx + (0.5*dx);
+        level_set[index] = helium_inside(x);
+        if (x < 0.25)
+        {
+            u2[index] = left;
+        }
+        else
+        {
+            u2[index] = right;
+        }
+        u1[index] = helium;
+    }
+}
+
+void update_level_set_function(const vector<vector<double>> & inside_state, const vector<vector<double>> & outside_state, double space_step, double time_step)
 {
     double v, difference;
     vector<double> result;
@@ -385,7 +546,7 @@ void update_level_set_function(const vector<vector<double>> & inside_state, cons
         {
             difference = level_set[index] - level_set[index-1];
         }
-        result[index] = level_set[index] - (time_step / space_step) * difference; 
+        result[index] = level_set[index] - (time_step / space_step) * v * difference; 
     }
     if (result[1] > 0.0)
     {
@@ -395,26 +556,26 @@ void update_level_set_function(const vector<vector<double>> & inside_state, cons
     {
         result[0] = result[1] - space_step;
     }
-    if (result[nPoints + 2*padding - 1] > 0.0)
+    if (result[nPoints + 2*padding - 2] > 0.0)
     {
-        result[nPoints + 2*padding] = result[nPoints + 2*padding - 1] - space_step;
+        result[nPoints + 2*padding-1] = result[nPoints + 2*padding - 2] - space_step;
     }
     else
     {
-        result[nPoints + 2*padding] = result[nPoints + 2*padding - 1] + space_step;
+        result[nPoints + 2*padding - 1] = result[nPoints + 2*padding - 2] + space_step;
     }
     level_set = result;
 }
 
-void SLICK_Step(int direction, int material, vector<vector<double>> &current, double space_step, double time_step)
+void SLICK_Step(int material, vector<vector<double>> &current, double space_step, double time_step)
 {
     
     int next_x = 1;
-    if (direction != 1)
-    {
-        std::cout << "Invalid direction\n";
-        exit(3);
-    }
+    // if (direction != 1)
+    // {
+    //     std::cout << "Invalid direction\n";
+    //     exit(3);
+    // }
     u_minus = current;
     u_plus = current;
     double r;
@@ -422,7 +583,7 @@ void SLICK_Step(int direction, int material, vector<vector<double>> &current, do
     double grad;
     for (int index_x = 1; index_x < (nPoints + 2*padding - 1); index_x++)
     {
-        if (current[index_x][num_variables-1] != current[index_x + next_x][num`-1])
+        if (current[index_x][num_variables-1] != current[index_x + next_x][num_variables-1])
         {
             r = ((current[index_x][num_variables-1] - current[index_x - next_x][num_variables-1]) / (current[index_x + next_x][num_variables-1] - current[index_x][num_variables-1]));
             lim = limiter(r);
@@ -439,8 +600,8 @@ void SLICK_Step(int direction, int material, vector<vector<double>> &current, do
             u_plus[index_x][j] += grad*lim*0.5;
         }
     }
-    boundary_condition(u_minus, padding);
-    boundary_condition(u_plus, padding);
+    boundary_condition(u_minus);
+    boundary_condition(u_plus);
     if (use_halfstep)
     {
         vector<double> flux_plus, flux_minus;
@@ -456,142 +617,78 @@ void SLICK_Step(int direction, int material, vector<vector<double>> &current, do
                 u_plus[index_x][j] -= change;
             }
         }
-        boundary_condition(u_minus, padding);
-        boundary_condition(u_plus, padding);
+        boundary_condition(u_minus);
+        boundary_condition(u_plus);
     }
 
     for (int i = 0; i < (nPoints + (2*padding) - 1); i++)
     {
-        f[i] = nummerical_flux(material, u_plus[i], u_minus[i + 1], space_step, time_step);
+        f[i] = FORCE_flux(material, u_plus[i], u_minus[i + 1], space_step, time_step);
     }
     
     for (int index_x = padding; index_x < (nPoints + padding); index_x++)
     {
         for (int j = 0; j < num_variables; j++)
         {
-            current[index_x][j] = current[index_x][j] - ((time_step / space_step)*(fs[index_x][j] - f[index_x - 1][j]));
+            current[index_x][j] = current[index_x][j] - ((time_step / space_step)*(f[index_x][j] - f[index_x - 1][j]));
         }
     }
-    boundary_condition(current, padding);
+    boundary_condition(current);
 }
 
 
 int main(int argc, char *argv[])
 {
-    nummerical_flux = FORCE_flux;
+    
     //limiter = zero_limiter;
     limiter = Van_Leer;
-    find_limiters = find_limiters_energy;
-
-    if (argc < 2)
-    {
-        std::cout << "Remember to specify the test case you are running\n";
-        exit(1);
-    }
-    // the first argument is the test case
-    if (argv[1][4] == '1') // Test1
-    {
-        rho_l = 1.0;
-        v_l = 0.0;
-        p_l = 1.0;
-        rho_r = 0.125;
-        v_r = 0.0;
-        p_r = 0.1;
-        tStop = 0.25;
-    }
-    else
-    {
-        if (argv[1][4] == '2') // Test2
-        {
-            rho_l = 1.0;
-            v_l = -2.0;
-            p_l = 0.4;
-            rho_r = 1.0;
-            v_r = 2.0;
-            p_r = 0.4;
-            tStop = 0.15;
-        }
-        else
-        {
-            if (argv[1][4] == '3') // Test3
-            {
-                rho_l = 1.0;
-                v_l = 0.0;
-                p_l = 1000.0;
-                rho_r = 1.0;
-                v_r = 0.0;
-                p_r = 0.01;
-                tStop = 0.012;
-            }
-            else
-            {
-                if (argv[1][4] == '4') // Test4
-                {
-                    rho_l = 1.0;
-                    v_l = 0.0;
-                    p_l = 0.01;
-                    rho_r = 1.0;
-                    v_r = 0.0;
-                    p_r = 100.0;
-                    tStop = 0.035;
-                }
-                else
-                {
-                    if (argv[1][4] == '5') // Test5
-                    {
-                        rho_l =  5.99924;
-                        v_l =  19.5975;
-                        p_l =  460.894;
-                        rho_r = 5.99242;
-                        v_r = -6.19633;
-                        p_r =  46.095;
-                        tStop = 0.035;
-                    }
-                    else
-                    {
-                        std::cout << "invalid test case\n";
-                        exit(1);
-                    }
-                }
-            }
-        }
-    }
-    
 
     dx = (x1 - x0) / nPoints;
-    u.resize(nPoints + 2*padding);
-    u_left.resize(nPoints + 2*padding);
-    u_right.resize(nPoints + 2*padding);
-    uPlusOne_left.resize(nPoints + 2*padding);
-    uPlusOne_right.resize(nPoints + 2*padding);
+    u1.resize(nPoints + 2*padding);
+    u2.resize(nPoints + 2*padding);
+    u_plus.resize(nPoints + 2*padding);
+    u_minus.resize(nPoints + 2*padding);
+    level_set.resize(nPoints + 2*padding);
     f.resize(nPoints + 2*padding - 1);
-    center_deltas.resize(nPoints + 2*padding);
-    limiters.resize(nPoints + 2*padding);
-    between_deltas.resize(nPoints + 2*padding - 1);
 
     for (int i = 0; i < (nPoints+(2*padding)-1); i++)
     {
-        u[i].resize(num_variables);
+        u1[i].resize(num_variables);
+        u2[i].resize(num_variables);
         f[i].resize(num_variables);
-        between_deltas[i].resize(num_variables);
-        limiters[i].resize(num_variables);
-        center_deltas[i].resize(num_variables);
-        u_left[i].resize(num_variables);
-        u_right[i].resize(num_variables);
-        uPlusOne_left[i].resize(num_variables);
-        uPlusOne_right[i].resize(num_variables);
+        u_plus[i].resize(num_variables);
+        u_minus[i].resize(num_variables);
     }
     int last_index = nPoints+(2*padding)-1;
-    u[last_index].resize(num_variables);
-    limiters[last_index].resize(num_variables);
-    center_deltas[last_index].resize(num_variables);
-    u_left[last_index].resize(num_variables);
-    u_right[last_index].resize(num_variables);
-    uPlusOne_left[last_index].resize(num_variables);
-    uPlusOne_right[last_index].resize(num_variables);
+    u1[last_index].resize(num_variables);
+    u2[last_index].resize(num_variables);
+    u_plus[last_index].resize(num_variables);
+    u_minus[last_index].resize(num_variables);
 
-    set_initial_value(u, padding);
-    print_result(u);
+    if (argc < 2)
+    {
+        std::cout << "Remember to specify the test case\n";
+        exit(1);
+    }
+    if (argv[1][0] == 'H') // Helium
+    {
+        set_initial_helium();
+        tStop = 0.3;
+    }
+    else
+    {
+        if (argv[1][0] = 'S') //Simple
+        {
+
+        }
+        else
+        {
+            std::cout << "Invalid test case\n";
+            exit(1);
+        }
+    }
+
+    print_result(u1, u2);
     std::cout << "\t\n";
 
     double t = tStart;
@@ -603,81 +700,30 @@ int main(int argc, char *argv[])
     flux_right.resize(num_variables);
     while (t < tStop)
     {
-        a_max = maximal_v(u);
+        a_max = maximal_v(u1, 0, u2, 1);
         dt = C * dx / a_max;
         // avoid overshooting the final time
         if ((t + dt) > tStop)
         {
             dt = tStop - t;
-        }     
-        //std::cout << dt << std::endl; 
-
-        find_deltas(u, between_deltas, center_deltas);
-        //std::cout << "Deltas ";
-        //find_limiters(between_deltas, limiters);
-        find_limiters(u, limiters);
-        //std::cout << "limiters\n";
-        //debug_result(limiters);
-
-        double  change;
-        for (int i = 0; i < (nPoints + (2*padding)); i++)
-        {
-            for (int j = 0; j < num_variables; j++)
-            {
-                change = 0.5*(limiters[i][j] * center_deltas[i][j]);
-                //std::cout << change << " ";
-                u_left[i][j] = u[i][j] - change; 
-                u_right[i][j] = u[i][j] + change;
-            }
-            //std::cout << std::endl;
         }
-        if (use_halfstep)
-        {
-            for (int i = 0; i < nPoints; i++)
-            {
-                flux_left = flux(u_left[i + padding]);
-                flux_right = flux(u_right[i + padding]);
-                for (int j = 0; j < num_variables; j++)
-                {
-                    change = (flux_right[j] - flux_left[j]) * dt / dx / 2.0;
-                    uPlusOne_left[i+padding][j] = u_left[i+padding][j] - change;
-                    uPlusOne_right[i+padding][j] = u_right[i+padding][j] - change;
-                }
-            }
-            for (int i = 0; i < padding; i++)
-            {
-                for (int j = 0; j < num_variables; j++)
-                {
-                    uPlusOne_left[i][j] = u_left[i][j];
-                    uPlusOne_right[i][j] = u_right[i][j];
-                    uPlusOne_right[nPoints+padding + i][j] = u_right[nPoints+padding+i][j];
-                    uPlusOne_left[nPoints+padding + i][j] = u_left[nPoints+padding+i][j];
-                }
-            }
-            u_left = uPlusOne_left;
-            u_right = uPlusOne_right;  
-        }
-        //boundary_condition(u_left, padding);
-        //boundary_condition(u_right, padding);
-        //debug_result(u_left);
-        //debug_result(u_right);
+        //std::cout << "Found time step\n";     
 
-        evaluate_flux(u_left, u_right, f, dx, dt);
+        FindGhostCells(u1, 0, u2, 1);
+        //std::cout << "Ghost cells done\n";
+        //debug_result(0, u1);
+        //debug_result(1, u2);
+        update_level_set_function(u1, u2, dx, dt);
+        SLICK_Step(0, u1, dx, dt);
+        SLICK_Step(1, u2, dx, dt);
 
-        //debug_result(f);
-
-        //std::cout << "Flux evaluated\n";
-
-        u = PDE_Step(u, f, dt, padding);
-
-        //print_result(u);
-        //std::cout << "PDE Step done\n";
-
+        //print_result(u1, u2);
         t = t + dt;
         step += 1;
+        //if (step > 2){exit(0);}
     }
-
-    print_result(u);
+    
+    print_result(u1, u2);
     //debug_result(u);
     return 0;
 }
