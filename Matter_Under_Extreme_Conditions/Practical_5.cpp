@@ -11,6 +11,22 @@ using std::cin;
 using std::vector;
 using std::string;
 
+template <typename T>
+std::ostream& operator << (std::ostream& os, const vector<T>& vector)
+{
+    // Printing all the elements using <<
+    int len = vector.size();
+    for (int index = 0; index < len - 1; index++) 
+    {
+        os << vector[index] << " ";
+    }
+    if (len != 0)
+    {
+        os << vector[len-1];
+    } 
+    return os;
+}
+
 const double pi = 3.14159265358979311600;
 
 int nPoints = 100;
@@ -32,7 +48,7 @@ bool use_halfstep = true;
 vector<vector<double>> u; // u[0] and u[nPoints+1] are padding
                           // u holds rho, rho_vx, rho_vy, rho_vz, Bx, By, Bz, U
 vector<vector<double>> f; //f[i] holds the flux from u[i] to u[i+1]
-vector<vector<double>> limiters;
+//vector<vector<double>> limiters;
 vector<vector<double>> u_minus;
 vector<vector<double>> u_plus;
 
@@ -51,14 +67,15 @@ void boundary_condition(vector<vector<double>> &values, int pad)
 
 vector<double> (flux)(int, const vector<double> &);
 
-vector<double> (*nummerical_flux)(const vector<double>&, const vector<double>&, double, double);
+//vector<double> (*nummerical_flux)(int direction, const vector<double>&, const vector<double>&, double, double);
+vector<double> (*nummerical_flux)(int, const vector<double>&, const vector<double>&, double, double);
 
-vector<double> Lax_Friedrichs_flux(const vector<double> & velocity, const vector<double> & velocity_next, double d_x, double d_t)
+vector<double> Lax_Friedrichs_flux(int direction, const vector<double> & velocity, const vector<double> & velocity_next, double d_x, double d_t)
 {
     vector<double> result;
     result.resize(num_variables);
-    vector<double> f_left = flux(velocity);
-    vector<double> f_right = flux(velocity_next);
+    vector<double> f_left = flux(direction, velocity);
+    vector<double> f_right = flux(direction, velocity_next);
     for (int i = 0; i < num_variables; i++)
     {
         result[i] = (d_x / d_t)*(velocity[i] - velocity_next[i]);
@@ -69,24 +86,24 @@ vector<double> Lax_Friedrichs_flux(const vector<double> & velocity, const vector
     return result;
 }
 
-vector<double> Richtmyer_flux(const vector<double> & velocity, const vector<double> & velocity_next, double d_x, double d_t)
+vector<double> Richtmyer_flux(int direction, const vector<double> & velocity, const vector<double> & velocity_next, double d_x, double d_t)
 {
     vector<double> velocity_half_step;
     velocity_half_step.resize(num_variables);
-    vector<double> f_left = flux(velocity);
-    vector<double> f_right = flux(velocity_next);
+    vector<double> f_left = flux(direction, velocity);
+    vector<double> f_right = flux(direction, velocity_next);
     for (int i = 0; i < num_variables; i++)
     {
         velocity_half_step[i]= 0.5*(velocity[i] + velocity_next[i]);
         velocity_half_step[i] += (-0.5)*(d_t/d_x)*(f_right[i]-f_left[i]);
     }
-    return flux(velocity_half_step);
+    return flux(direction, velocity_half_step);
 }
 
-vector<double> FORCE_flux(const vector<double> & velocity, const vector<double> & velocity_next, double d_x, double d_t)
+vector<double> FORCE_flux(int direction, const vector<double> & velocity, const vector<double> & velocity_next, double d_x, double d_t)
 {
-    vector<double> result = Lax_Friedrichs_flux(velocity, velocity_next, d_x, d_t);
-    vector<double> R = Richtmyer_flux(velocity, velocity_next, d_x, d_t);
+    vector<double> result = Lax_Friedrichs_flux(direction, velocity, velocity_next, d_x, d_t);
+    vector<double> R = Richtmyer_flux(direction, velocity, velocity_next, d_x, d_t);
     for (int i = 0; i < num_variables; i++)
     {
         result[i] = 0.5*(result[i] + R[i]);
@@ -126,7 +143,7 @@ void set_initial_value(vector<vector<double>> &vel, int pad)
         vel[i+pad][5] = By_l;
         vel[i+pad][6] = Bz_l;
         vel[i+pad][7] = E_l;
-        vel[nPoints-+pad][0] = rho_r;
+        vel[nPoints-i+pad][0] = rho_r;
         vel[nPoints-i+pad][1] = rho_vx_r;
         vel[nPoints-i+pad][2] = rho_vy_r;
         vel[nPoints-i+pad][3] = rho_vz_r;
@@ -195,23 +212,22 @@ double pressure(const vector<double> & state)
     vector<double> v;
     v.resize(3);
     double p;
-    double B_2;
+    double B_2 = 0.5*(state[4]*state[4] + state[5]*state[5] + state[6]*state[6]);
     if (rho == 0.0)
     {
         /*
         std::cout << "Zero density when calculating the pressure\n";
         exit(2);
         */
-       p = ((gas_coef - 1)*E);
+       p = ((gas_coef - 1)*(E - B_2));
     }
     else
     {
-        B_2 = 0.5*(state[4]*state[4] + state[5]*state[5] + state[6]*state[6]);
         for (int j = 0; j < 3; j++)
         {
             v[j] = state[1+j]/rho;
         }
-        p = ((gas_coef - 1)*(E - (square(vec_len(v))*rho*0.5) - B_2));
+        p = ((gas_coef - 1)*(E - (((v[0]*v[0]) + (v[1]*v[1]) + (v[2]*v[2]))*rho*0.5) - B_2));
     }
     /*
     if (p < 0.0)
@@ -268,7 +284,7 @@ double maximal_v(const vector<vector<double>>& values)
 {
     int number = values.size();
     double rho;
-    double result = 0;
+    double result = 0.0;
     double v_c, c_s, c_a, c_f;
     vector<double> v;
     v.resize(3);
@@ -276,7 +292,7 @@ double maximal_v(const vector<vector<double>>& values)
     {
         rho = values[i][0];
         c_s = speed_of_sound(values[i]);
-        c_a = values[i][4] / sqrt(values[i][0]);
+        c_a = abs(values[i][4]) / sqrt(values[i][0]);
         c_f = sqrt(0.5*(c_s*c_s + c_a*c_a + abs(c_s*c_s - c_a*c_a)));
 
         for (int j = 0; j < 3; j++)
@@ -297,7 +313,7 @@ vector<double> flux(int direction, const vector<double> & state)
 {
     if ((direction < 1)||(direction > num_dimmensions))
     {
-        std::cout << "Invalid direction when evaluating flux\n"
+        std::cout << "Invalid direction when evaluating flux\n";
         exit(4);
     }
     vector<double> result;
@@ -323,18 +339,20 @@ vector<double> flux(int direction, const vector<double> & state)
         for (int i = 0; i < 3; i++)
         {
             result[i+1] = state[direction]*v[i] - state[direction+3]*state[i+4];
-            result[i+4] = state[i+4]*state[direction] - state[direction+3]*state[i+1];
+            result[i+4] = state[i+4]*state[direction]/rho - state[direction+3]*state[i+1]/rho;
         }
         result[direction] += p + B_2;
         result[num_variables-1] = (state[num_variables-1] + p + B_2) * v[direction-1];
         for (int i = 0; i < 3; i++)
         {
             result[num_variables-1] -= state[direction + 3]*v[i]*state[i+4];
+        }
     }
     
     return result;
 }
 
+/*
 void evaluate_flux(const vector<vector<double>> & values_left, const vector<vector<double>> & values_right, vector<vector<double>> &flu, double space_step, double time_step)
 {
     for (int i = 0; i < (nPoints + (2*padding) - 1); i++)
@@ -344,8 +362,9 @@ void evaluate_flux(const vector<vector<double>> & values_left, const vector<vect
         flu[i] = nummerical_flux(values_right[i], values_left[i+1], space_step, time_step);
     }
 }
+*/
 
-double (*limiter)(double r);
+double (*limiter)(double);
 
 double minbee(double r)
 {
@@ -416,6 +435,7 @@ double Van_Leer(double r)
     }
 }
 
+/*
 void (*find_limiters)(const vector<vector<double>> & between, vector<vector<double>> & limiters);
 
 void find_limiters_energy(const vector<vector<double>> & values, vector<vector<double>> & limiters)
@@ -448,57 +468,109 @@ void find_limiters_energy(const vector<vector<double>> & values, vector<vector<d
         }
     }
 }
+*/
 
+void (*slope_reconstruction)(vector<vector<double>> const &, vector<vector<double>> &, vector<vector<double>> &);
+
+void (slope_reconstruction_min)(vector<vector<double>> const & middle, vector<vector<double>> & left, vector<vector<double>> & right)
+{
+    double r;
+    double lim;
+    double grad;
+    for (int index_x = 1; index_x < (nPoints + 2*padding - 1); index_x++)
+    {
+        lim = 1.0;
+        for (int j = 0; j < num_variables; j++)
+        {
+            if (middle[index_x][j] != middle[index_x + 1][j])
+            {
+                r = ((middle[index_x][j] - middle[index_x - 1][j]) / (middle[index_x + 1][j] - middle[index_x][j]));
+                lim = min(lim, limiter(r));
+            }
+            else
+            {
+                if (middle[index_x - 1][j] != middle[index_x][j])
+                {
+                    lim = 0.0;
+                }
+                else
+                {   
+                    lim = min(1.0, lim);
+                }
+            }
+        }
+        for (int j = 0; j < num_variables; j++)
+        {
+            
+            grad = (middle[index_x+1][j] - middle[index_x-1][j])*0.5;
+            left[index_x][j] = middle[index_x][j] - (grad*lim*0.5);
+            right[index_x][j] = middle[index_x][j] + (grad*lim*0.5);
+        }
+    }
+    boundary_condition(left, padding);
+    boundary_condition(right, padding);
+}
+
+void (slope_reconstruction_individual)(vector<vector<double>> const & middle, vector<vector<double>> & left, vector<vector<double>> & right)
+{
+    double r;
+    double lim;
+    double grad;
+    for (int index_x = 1; index_x < (nPoints + 2*padding - 1); index_x++)
+    {
+        for (int j = 0; j < num_variables; j++)
+        {
+            if (middle[index_x][j] != middle[index_x + 1][j])
+            {
+                r = ((middle[index_x][j] - middle[index_x - 1][j]) / (middle[index_x + 1][j] - middle[index_x][j]));
+                lim = limiter(r);
+            }
+            else
+            {
+                if (middle[index_x - 1][j] != middle[index_x][j])
+                {
+                    lim = 0.0;
+                }
+                else
+                {   
+                    lim = 1.0;
+                }
+            }
+            grad = (middle[index_x+1][j] - middle[index_x-1][j])*0.5;
+            left[index_x][j] = middle[index_x][j] - (grad*lim*0.5);
+            right[index_x][j] = middle[index_x][j] + (grad*lim*0.5);
+        } 
+    }
+    boundary_condition(left, padding);
+    boundary_condition(right, padding);
+}
 
 void SLICK_Step(int direction, vector<vector<double>> &current, vector<vector<double>> &fluxes, double space_step, double time_step)
 {
-    
     int next_x = 1;
     if (direction != 1)
     {
         std::cout << "Invalid direction\n";
         exit(3);
     }
-    u_minus = current;
-    u_plus = current;
-    double r;
-    double lim;
-    double grad;
-    for (int index_x = 1; index_x < (nPoints + 2*padding - 1); index_x++)
-    {
-        if (current[index_x][num_variables-1] != current[index_x + next_x][num`-1])
-        {
-            r = ((current[index_x][num_variables-1] - current[index_x - next_x][num_variables-1]) / (current[index_x + next_x][num_variables-1] - current[index_x][num_variables-1]));
-            lim = limiter(r);
-        }
-        else
-        {
-            lim = 0.0;
-        }
-        for (int j = 0; j < num_variables; j++)
-        {
-            
-            grad = (current[index_x+1][j] - current[index_x-1][j])*0.5;
-            u_minus[index_x][j] -= grad*lim*0.5;
-            u_plus[index_x][j] += grad*lim*0.5;
-        }
-    }
-    boundary_condition(u_minus, padding);
-    boundary_condition(u_plus, padding);
+    //u_minus = current;
+    //u_plus = current;
+
+    slope_reconstruction(current, u_minus, u_plus);
+    
     if (use_halfstep)
     {
         vector<double> flux_plus, flux_minus;
         double change;
         for (int index_x = padding; index_x < nPoints+ padding; index_x++)
         {
-                flux_minus = flux(direction, u_minus[index_x]);
-                flux_plus = flux(direction, u_plus[index_x]);
-                for (int j = 0; j < num_variables; j++)
-                {
-                    change = (flux_plus[j] - flux_minus[j]) * time_step / space_step / 2.0;
-                    u_minus[index_x][j] -= change;
-                    u_plus[index_x][j] -= change;
-                }
+            flux_minus = flux(direction, u_minus[index_x]);
+            flux_plus = flux(direction, u_plus[index_x]);
+            for (int j = 0; j < num_variables; j++)
+            {
+                change = (flux_plus[j] - flux_minus[j]) * time_step / space_step / 2.0;
+                u_minus[index_x][j] -= change;
+                u_plus[index_x][j] -= change;
             }
         }
         boundary_condition(u_minus, padding);
@@ -518,6 +590,7 @@ void SLICK_Step(int direction, vector<vector<double>> &current, vector<vector<do
         }
     }
     boundary_condition(current, padding);
+
 }
 
 
@@ -525,115 +598,148 @@ int main(int argc, char *argv[])
 {
     nummerical_flux = FORCE_flux;
     //limiter = zero_limiter;
+    //limiter = superbee;
     limiter = Van_Leer;
-    find_limiters = find_limiters_energy;
+    //find_limiters = find_limiters_energy;
+    slope_reconstruction = slope_reconstruction_min;
 
     if (argc < 2)
     {
         std::cout << "Remember to specify the test case you are running\n";
         exit(1);
     }
-    // the first argument is the test case
-    if (argv[1][4] == '1') // Test1
+
+    if (argv[1][0] == 'T') //Toro
     {
         rho_l = 1.0;
-        v_l = 0.0;
+        vx_l = 0.0;
+        vy_l = 0.0;
+        vz_l = 0.0;
         p_l = 1.0;
+        Bx_l = 0.0;
+        By_l = 0.0;
+        Bz_l = 0.0;
         rho_r = 0.125;
-        v_r = 0.0;
+        vx_r = 0.0;
+        vy_r = 0.0;
+        vz_r = 0.0;
+        Bx_r = 0.0;
+        By_r = 0.0;
+        Bz_r = 0.0;
         p_r = 0.1;
         tStop = 0.25;
     }
     else
     {
-        if (argv[1][4] == '2') // Test2
+        if (argv[1][0] == 'B' && argv[1][6] == '1') // BrioWu1
         {
+            gas_coef = 2;
+            nPoints = 800;
             rho_l = 1.0;
-            v_l = -2.0;
-            p_l = 0.4;
-            rho_r = 1.0;
-            v_r = 2.0;
-            p_r = 0.4;
-            tStop = 0.15;
+            vx_l = 0.0;
+            vy_l = 0.0;
+            vz_l = 0.0;
+            p_l = 1.0;
+            Bx_l = 0.75;
+            By_l = 1.0;
+            Bz_l = 0.0;
+            rho_r = 0.125;
+            vx_r = 0.0;
+            vy_r = 0.0;
+            vz_r = 0.0;
+            p_r = 0.1;
+            Bx_r = 0.75;
+            By_r = -1.0;
+            Bz_r = 0.0;
+            tStop = 0.1;
         }
         else
         {
-            if (argv[1][4] == '3') // Test3
+            if (argv[1][0] == 'B' && argv[1][6] == '2') // BrioWu2
             {
+                gas_coef = 2;
+                nPoints = 800;
                 rho_l = 1.0;
-                v_l = 0.0;
-                p_l = 1000.0;
-                rho_r = 1.0;
-                v_r = 0.0;
-                p_r = 0.01;
-                tStop = 0.012;
+                vx_l = 0.0;
+                vy_l = 0.0;
+                vz_l = 0.0;
+                p_l = 1.0;
+                Bx_l = 0.75;
+                By_l = 0.0;
+                Bz_l = 1.0;
+                rho_r = 0.125;
+                vx_r = 0.0;
+                vy_r = 0.0;
+                vz_r = 0.0;
+                p_r = 0.1;
+                Bx_r = 0.75;
+                By_r = 0.0;
+                Bz_r = -1.0;
+                tStop = 0.1;
             }
             else
             {
-                if (argv[1][4] == '4') // Test4
+                if (argv[1][0] == 'R') //RyuJones
                 {
-                    rho_l = 1.0;
-                    v_l = 0.0;
-                    p_l = 0.01;
+                    gas_coef = 5.0 / 3.0;
+                    rho_l = 1.08;
+                    vx_l = 1.2;
+                    vy_l = 0.01;
+                    vz_l = 0.5;
+                    p_l = 1.8/sqrt(pi);
+                    Bx_l = 1.0/sqrt(pi);
+                    By_l = 1.0/sqrt(pi);
+                    Bz_l = 0.95;
                     rho_r = 1.0;
-                    v_r = 0.0;
-                    p_r = 100.0;
-                    tStop = 0.035;
+                    vx_r = 0.0;
+                    vy_r = 0.0;
+                    vz_r = 0.0;
+                    p_r = 2.0/sqrt(pi);
+                    Bx_r = 1.0/sqrt(pi);
+                    By_r = 1.0/sqrt(pi);
+                    Bz_r = 1.0;
+                    tStop = 0.1;
                 }
                 else
                 {
-                    if (argv[1][4] == '5') // Test5
-                    {
-                        rho_l =  5.99924;
-                        v_l =  19.5975;
-                        p_l =  460.894;
-                        rho_r = 5.99242;
-                        v_r = -6.19633;
-                        p_r =  46.095;
-                        tStop = 0.035;
-                    }
-                    else
-                    {
-                        std::cout << "invalid test case\n";
-                        exit(1);
-                    }
+                    std::cout << "invalid test case\n";
+                    exit(1);
                 }
             }
         }
     }
-    
 
     dx = (x1 - x0) / nPoints;
     u.resize(nPoints + 2*padding);
-    u_left.resize(nPoints + 2*padding);
-    u_right.resize(nPoints + 2*padding);
-    uPlusOne_left.resize(nPoints + 2*padding);
-    uPlusOne_right.resize(nPoints + 2*padding);
+    u_plus.resize(nPoints + 2*padding);
+    u_minus.resize(nPoints + 2*padding);
+    //uPlusOne_left.resize(nPoints + 2*padding);
+    //uPlusOne_right.resize(nPoints + 2*padding);
     f.resize(nPoints + 2*padding - 1);
-    center_deltas.resize(nPoints + 2*padding);
-    limiters.resize(nPoints + 2*padding);
-    between_deltas.resize(nPoints + 2*padding - 1);
+    //center_deltas.resize(nPoints + 2*padding);
+    //limiters.resize(nPoints + 2*padding);
+    //between_deltas.resize(nPoints + 2*padding - 1);
 
     for (int i = 0; i < (nPoints+(2*padding)-1); i++)
     {
         u[i].resize(num_variables);
         f[i].resize(num_variables);
-        between_deltas[i].resize(num_variables);
-        limiters[i].resize(num_variables);
-        center_deltas[i].resize(num_variables);
-        u_left[i].resize(num_variables);
-        u_right[i].resize(num_variables);
-        uPlusOne_left[i].resize(num_variables);
-        uPlusOne_right[i].resize(num_variables);
+        //between_deltas[i].resize(num_variables);
+        //limiters[i].resize(num_variables);
+        //center_deltas[i].resize(num_variables);
+        u_plus[i].resize(num_variables);
+        u_minus[i].resize(num_variables);
+        //uPlusOne_left[i].resize(num_variables);
+        //uPlusOne_right[i].resize(num_variables);
     }
     int last_index = nPoints+(2*padding)-1;
     u[last_index].resize(num_variables);
-    limiters[last_index].resize(num_variables);
-    center_deltas[last_index].resize(num_variables);
-    u_left[last_index].resize(num_variables);
-    u_right[last_index].resize(num_variables);
-    uPlusOne_left[last_index].resize(num_variables);
-    uPlusOne_right[last_index].resize(num_variables);
+    //limiters[last_index].resize(num_variables);
+    //center_deltas[last_index].resize(num_variables);
+    u_plus[last_index].resize(num_variables);
+    u_minus[last_index].resize(num_variables);
+    //uPlusOne_left[last_index].resize(num_variables);
+    //uPlusOne_right[last_index].resize(num_variables);
 
     set_initial_value(u, padding);
     print_result(u);
@@ -655,14 +761,10 @@ int main(int argc, char *argv[])
         {
             dt = tStop - t;
         }     
-        //std::cout << dt << std::endl; 
 
+        /*
         find_deltas(u, between_deltas, center_deltas);
-        //std::cout << "Deltas ";
-        //find_limiters(between_deltas, limiters);
         find_limiters(u, limiters);
-        //std::cout << "limiters\n";
-        //debug_result(limiters);
 
         double  change;
         for (int i = 0; i < (nPoints + (2*padding)); i++)
@@ -702,21 +804,13 @@ int main(int argc, char *argv[])
             u_left = uPlusOne_left;
             u_right = uPlusOne_right;  
         }
-        //boundary_condition(u_left, padding);
-        //boundary_condition(u_right, padding);
-        //debug_result(u_left);
-        //debug_result(u_right);
+        */
 
-        evaluate_flux(u_left, u_right, f, dx, dt);
 
-        //debug_result(f);
+        //evaluate_flux(u_left, u_right, f, dx, dt);
+        //u = PDE_Step(u, f, dt, padding);
 
-        //std::cout << "Flux evaluated\n";
-
-        u = PDE_Step(u, f, dt, padding);
-
-        //print_result(u);
-        //std::cout << "PDE Step done\n";
+        SLICK_Step(1, u, f, dx, dt);
 
         t = t + dt;
         step += 1;
