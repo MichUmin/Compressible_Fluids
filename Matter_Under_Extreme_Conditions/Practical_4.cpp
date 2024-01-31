@@ -14,7 +14,7 @@ using std::string;
 const double pi = 3.14159265358979311600;
 
 int nPoints = 100;
-int padding = 1;
+int padding = 2;
 double x0 = 0;
 double x1 = 1;
 double tStart = 0.0;
@@ -23,10 +23,9 @@ double a = 1;
 double dx = (x1 - x0)/nPoints;
 double C = 0.8;
 double gas_coef = 1.4;
-double gamma = 7.15;
 double p_inf = 300000000.0;
 double Gamma = 0.25;
-double epsiolon_delta = 0.0;
+double epsilon_delta = 0.0;
 double rho_0 = 1840.0;
 double A = 854500000000.0;
 double B = 20500000000.0;
@@ -35,18 +34,13 @@ double R_2 = 1.35;
 int num_dimensions = 1;
 int num_variables = num_dimensions + 2;
 int step = 0;
-double v_l, v_r, rho_l, rho_r, p_l, p_r;
+double v_l, v_r, rho_l, rho_r, p_l, p_r, rho_v_l, rho_v_r, epsilon_l, epsilon_r, E_l, E_r;
 bool use_halfstep = true;
-//define a vector to store discretised data
+
 vector<vector<double>> u; //u[0] and u[nPoints+1] are padding
 vector<vector<double>> f; //f[i] holds the flux from u[i] to u[i+1]
-vector<vector<double>> center_deltas;
-vector<vector<double>> between_deltas;
-vector<vector<double>> limiters;
-vector<vector<double>> u_left;
-vector<vector<double>> u_right;
-vector<vector<double>> uPlusOne_left;
-vector<vector<double>> uPlusOne_right;
+vector<vector<double>> u_minus;
+vector<vector<double>> u_plus;
 
 vector<double> (flux)(const vector<double> &);
 
@@ -127,12 +121,12 @@ vector<double> FORCE_flux(const vector<double> & velocity, const vector<double> 
 
 void set_initial_value(vector<vector<double>> &vel, int pad)
 {
+    /*
     double rho_v_l = rho_l*v_l;
     double E_l = p_l/(gas_coef - 1.0) + (rho_l*v_l*v_l/2.0);
     double rho_v_r = rho_r*v_r;
     double E_r = p_r/(gas_coef - 1.0) + (rho_r*v_r*v_r/2.0);
-    double x;
-    double integral = 0;
+    */
     for (int i = 0; i <= nPoints/2 ; i ++)
     {
         vel[i+pad][0] = rho_l;
@@ -188,12 +182,13 @@ double internal_energy(const vector<double> & state)
     double epsilon;
     if (rho == 0.0)
     {
-        epsilon = e;
+        cout << "Zero density at step: " << step  <<"\n";
+        exit(3);
     }
     else
     {
         v = rho_v / rho;
-        epsilon = E - (0.5*rho_v*v);
+        epsilon = (E - (0.5*rho_v*v))/rho;
     }
     return epsilon;
 }
@@ -272,11 +267,11 @@ double stiffened_pressure(const vector<double> & state)
         std::cout << rho << " " << rho_v << "\n";
         exit(2);
         */
-       p = (((gamma - 1)*E) - (gamma * p_inf));
+       p = (((gas_coef - 1)*E) - (gas_coef * p_inf));
     }
     else
     {
-        p = (((gamma - 1)*(E - (rho_v*rho_v)/(2*rho))) - (gamma * p_inf));
+        p = (((gas_coef - 1)*(E - (rho_v*rho_v)/(2*rho))) - (gas_coef * p_inf));
     }
 
     return p;
@@ -295,7 +290,7 @@ double stiffened_speed_of_sound(const vector<double> & state)
     }
     else
     {
-        cs_2 = gamma * (p + p_inf) / rho;
+        cs_2 = gas_coef * (p + p_inf) / rho;
         return (sqrt(cs_2));
     }
 }
@@ -306,7 +301,14 @@ double p_ref(double rho)
     exponent1 = (-1.0)*R_1*rho_0 / rho;
     exponent2 = (-1.0)*R_2*rho_0 / rho;
     return (A*exp(exponent1) + B*exp(exponent2));
+}
 
+double p_ref_prime(double rho)
+{
+    double exponent1, exponent2;
+    exponent1 = (-1.0)*R_1*rho_0 / rho;
+    exponent2 = (-1.0)*R_2*rho_0 / rho;
+    return ((A*R_1*rho_0 / (rho*rho))*exp(exponent1) + (B*R_2*rho_0 / (rho*rho))*exp(exponent2));
 }
 
 double epsilon_ref(double rho)
@@ -318,7 +320,16 @@ double epsilon_ref(double rho)
     result = (A/R_1)*exp(exponent1) + (B/R_2)*exp(exponent2);
     result = (result/rho_0) - epsilon_delta;
     return result;
+}
 
+double epsilon_ref_prime(double rho)
+{
+    double exponent1, exponent2;
+    double result;
+    exponent1 = (-1.0)*R_1*rho_0 / rho;
+    exponent2 = (-1.0)*R_2*rho_0 / rho;
+    result = (A/(rho*rho))*exp(exponent1) + (B/(rho*rho))*exp(exponent2);
+    return result;
 }
 
 double JWL_pressure(const vector<double> & state)
@@ -326,12 +337,14 @@ double JWL_pressure(const vector<double> & state)
     double rho_v = state[1];
     double rho = state[0];
     double E = state[2];
+    double eps = (E - (0.5*rho_v*rho_v/rho))/rho;
     double p;
-    p = p_ref(rho) + Gamma*rho*(internal_energy(state) - epsilon_ref(rho));
+    p = p_ref(rho) + Gamma*rho*(eps - epsilon_ref(rho));
     
     return p;
 }
 
+/*
 double JWL_speed_of_sound(const vector<double> & state)
 {
     double rho = state[0];
@@ -346,16 +359,40 @@ double JWL_speed_of_sound(const vector<double> & state)
     result += Gamma*(p/rho + A/R_1*exponent1*exp(exponent1) + B/R_2*exponent2*exp(exponent2));
     return sqrt(result);
 }
+*/
+
+double JWL_speed_of_sound(const vector<double> & state)
+{
+    double rho = state[0];
+    if (rho == 0.0)
+    {
+        cout << "Zero density when evaluating speed of sound\n";
+        exit(2);
+    }
+    double p = pressure(state);
+    double result;
+    result = p*Gamma/rho + p_ref_prime(rho) - Gamma*rho*epsilon_ref_prime(rho) + (p - p_ref(rho))/rho;
+    if (result <= 0.0)
+    {
+        cout << "Negative cs^2 at step: " << step << "\n";
+        exit(2);
+    }
+    return sqrt(result);
+}
+
 
 double maximal_v(const vector<vector<double>>& values)
 {
     int number = values.size();
-    double result = 0;
+    double result = 0.0;
     double v_c;
-    for (int i = 0; i < number; i++)
+    for (int i = padding; i < nPoints + padding; i++)
     {
-        v_c = values[i][1] / values[i][0]; // rho_v / rho
-        v_c = abs(v_c) + speed_of_sound(values[i]);
+        v_c = speed_of_sound(values[i]);
+        if (values[i][0] >= 0.0000001)
+        {
+            v_c += abs(values[i][1]) / values[i][0]; // rho_v / rho
+        }
         if (v_c > result)
         {
             result = v_c;
@@ -473,7 +510,7 @@ double Van_Leer(double r)
         }
     }
 }
-
+/*
 void find_deltas(const vector<vector<double>> & values, vector<vector<double>> & between, vector<vector<double>> & center)
 {
     for (int i = 1; i < nPoints + (2*padding)-1; i++)
@@ -522,120 +559,177 @@ void find_limiters_energy(const vector<vector<double>> & values, vector<vector<d
         }
     }
 }
+*/
+
+void (*slope_reconstruction)(vector<vector<double>> const &, vector<vector<double>> &, vector<vector<double>> &);
+
+void (slope_reconstruction_energy)(vector<vector<double>> const & middle, vector<vector<double>> & left, vector<vector<double>> & right)
+{
+    double r;
+    double lim;
+    double grad;
+    for (int index_x = 1; index_x < (nPoints + 2*padding - 1); index_x++)
+    {
+        if (middle[index_x][num_variables-1] != middle[index_x + 1][num_variables-1])
+        {
+            r = ((middle[index_x][num_variables-1] - middle[index_x - 1][num_variables-1]) / (middle[index_x + 1][num_variables-1] - middle[index_x][num_variables-1]));
+            lim = limiter(r);
+        }
+        else
+        {
+            lim = 0.0;
+        }
+        for (int j = 0; j < num_variables; j++)
+        {
+            grad = (middle[index_x+1][j] - middle[index_x-1][j])*0.5;
+            left[index_x][j] = middle[index_x][j] - (grad*lim*0.5);
+            right[index_x][j] = middle[index_x][j] + (grad*lim*0.5);
+        }
+    }
+    boundary_condition(left, padding);
+    boundary_condition(right, padding);
+}
+
+void SLICK_Step(vector<vector<double>> &current, vector<vector<double>> &fluxes, double space_step, double time_step)
+{
+    int next_x = 1;
+
+    slope_reconstruction(current, u_minus, u_plus);
+    
+    if (use_halfstep)
+    {
+        vector<double> flux_plus, flux_minus;
+        double change;
+        for (int index_x = padding; index_x < nPoints+ padding; index_x++)
+        {
+            flux_minus = flux(u_minus[index_x]);
+            flux_plus = flux(u_plus[index_x]);
+            for (int j = 0; j < num_variables; j++)
+            {
+                change = (flux_plus[j] - flux_minus[j]) * time_step / space_step / 2.0;
+                u_minus[index_x][j] -= change;
+                u_plus[index_x][j] -= change;
+            }
+        }
+        boundary_condition(u_minus, padding);
+        boundary_condition(u_plus, padding);
+    }
+
+    for (int i = 0; i < (nPoints + (2*padding) - 1); i++)
+    {
+        fluxes[i] = FORCE_flux(u_plus[i], u_minus[i + 1], space_step, time_step);
+    }
+    
+    for (int index_x = padding; index_x < (nPoints + padding); index_x++)
+    {
+        for (int j = 0; j < num_variables; j++)
+        {
+            current[index_x][j] = current[index_x][j] - ((time_step / space_step)*(fluxes[index_x][j] - fluxes[index_x - 1][j]));
+        }
+    }
+    boundary_condition(current, padding);
+}
 
 int main(int argc, char *argv[])
 {
     nummerical_flux = FORCE_flux;
-    //limiter = zero_limiter;
-    limiter = Van_Leer;
-    find_limiters = find_limiters_energy;
+    limiter = zero_limiter;
+    //limiter = Van_Leer;
+    //find_limiters = find_limiters_energy;
+    slope_reconstruction = slope_reconstruction_energy;
 
-    if (argc != 2)
+    if (argc < 2)
     {
         std::cout << "Remember to specify the test case you are running\n";
         exit(1);
     }
     // the first argument is the test case
-    if (argv[1][4] == '1') // Test1
+    if (argv[1][0] == 'J') // JWL
     {
-        rho_l = 1.0;
+        tStop = 0.000012;
+        pressure = JWL_pressure;
+        speed_of_sound = JWL_speed_of_sound;
+
+        rho_l = 1700.0;
         v_l = 0.0;
-        p_l = 1.0;
-        rho_r = 0.125;
+        p_l = 1000000000000.0;
+        rho_v_l = rho_l * v_l;
+        rho_r = 1000.0;
         v_r = 0.0;
-        p_r = 0.1;
-        tStop = 0.25;
+        p_r = 50000000000.0;
+        rho_v_r = rho_r * v_r;
+        epsilon_l = ((p_l - p_ref(rho_l)) / (Gamma * rho_l))+ epsilon_ref(rho_l);
+        E_l = rho_l * (epsilon_l + 0.5*v_l*v_l);
+        epsilon_r = ((p_r - p_ref(rho_r)) / (Gamma * rho_r)) + epsilon_ref(rho_r);
+        E_r = rho_r * (epsilon_r + 0.5*v_r*v_r);
     }
     else
     {
-        if (argv[1][4] == '2') // Test2
+        if (argv[1][9] == '1') // Stiffened1
         {
-            rho_l = 1.0;
-            v_l = -2.0;
-            p_l = 0.4;
-            rho_r = 1.0;
-            v_r = 2.0;
-            p_r = 0.4;
-            tStop = 0.15;
+            tStop = 0.00005;
+            pressure = stiffened_pressure;
+            speed_of_sound = stiffened_speed_of_sound;
+            gas_coef = 7.15;
+
+            rho_l = 1500.0;
+            v_l = 0.0;
+            p_l = 3000.0 * 101325.0;
+            rho_r = 1000.0;
+            v_r = 0.0;
+            p_r = 101325.0;
+            rho_v_l = rho_l * v_l;
+            rho_v_r = rho_r * v_r;
+            E_l = (p_l + gas_coef*p_inf)/(gas_coef - 1.0) + 0.5*rho_l*v_l*v_l;
+            E_r = (p_r + gas_coef*p_inf)/(gas_coef - 1.0) + 0.5*rho_r*v_r*v_r;
         }
         else
         {
-            if (argv[1][4] == '3') // Test3
+            if (argv[1][9] == '2') // Stiffened2
             {
-                rho_l = 1.0;
-                v_l = 0.0;
-                p_l = 1000.0;
-                rho_r = 1.0;
-                v_r = 0.0;
-                p_r = 0.01;
-                tStop = 0.012;
+                tStop = 0.00005;
+                pressure = stiffened_pressure;
+                speed_of_sound = stiffened_speed_of_sound;
+                gas_coef = 7.15;
+
+                rho_l = 1000.0;
+                v_l = -100.0;
+                p_l = 2.0 * 101325.0;
+                rho_r = 1000.0;
+                v_r = 100.0;
+                p_r = 2.0*101325.0;
+                rho_v_l = rho_l * v_l;
+                rho_v_r = rho_r * v_r;
+                E_l = (p_l + gas_coef*p_inf)/(gas_coef - 1.0) + 0.5*rho_l*v_l*v_l;
+                E_r = (p_r + gas_coef*p_inf)/(gas_coef - 1.0) + 0.5*rho_r*v_r*v_r;
             }
             else
             {
-                if (argv[1][4] == '4') // Test4
-                {
-                    rho_l = 1.0;
-                    v_l = 0.0;
-                    p_l = 0.01;
-                    rho_r = 1.0;
-                    v_r = 0.0;
-                    p_r = 100.0;
-                    tStop = 0.035;
-                }
-                else
-                {
-                    if (argv[1][4] == '5') // Test5
-                    {
-                        rho_l =  5.99924;
-                        v_l =  19.5975;
-                        p_l =  460.894;
-                        rho_r = 5.99242;
-                        v_r = -6.19633;
-                        p_r =  46.095;
-                        tStop = 0.035;
-                    }
-                    else
-                    {
-                        std::cout << "invalid test case\n";
-                        exit(1);
-                    }
-                }
+                std::cout << "invalid test case\n";
+                exit(1);
             }
         }
     }
     
+    int nSteps = atoi(argv[2]);
 
     dx = (x1 - x0) / nPoints;
     u.resize(nPoints + 2*padding);
-    u_left.resize(nPoints + 2*padding);
-    u_right.resize(nPoints + 2*padding);
-    uPlusOne_left.resize(nPoints + 2*padding);
-    uPlusOne_right.resize(nPoints + 2*padding);
+    u_minus.resize(nPoints + 2*padding);
+    u_plus.resize(nPoints + 2*padding);
     f.resize(nPoints + 2*padding - 1);
-    center_deltas.resize(nPoints + 2*padding);
-    limiters.resize(nPoints + 2*padding);
-    between_deltas.resize(nPoints + 2*padding - 1);
 
     for (int i = 0; i < (nPoints+(2*padding)-1); i++)
     {
         u[i].resize(num_variables);
         f[i].resize(num_variables);
-        between_deltas[i].resize(num_variables);
-        limiters[i].resize(num_variables);
-        center_deltas[i].resize(num_variables);
-        u_left[i].resize(num_variables);
-        u_right[i].resize(num_variables);
-        uPlusOne_left[i].resize(num_variables);
-        uPlusOne_right[i].resize(num_variables);
+        u_minus[i].resize(num_variables);
+        u_plus[i].resize(num_variables);
     }
     int last_index = nPoints+(2*padding)-1;
     u[last_index].resize(num_variables);
-    limiters[last_index].resize(num_variables);
-    center_deltas[last_index].resize(num_variables);
-    u_left[last_index].resize(num_variables);
-    u_right[last_index].resize(num_variables);
-    uPlusOne_left[last_index].resize(num_variables);
-    uPlusOne_right[last_index].resize(num_variables);
+    u_minus[last_index].resize(num_variables);
+    u_plus[last_index].resize(num_variables);
 
     set_initial_value(u, padding);
     print_result(u);
@@ -644,11 +738,9 @@ int main(int argc, char *argv[])
     double t = tStart;
     double dt;
     double a_max;
-    step = 1;
-    vector<double> flux_left, flux_right;
-    flux_left.resize(num_variables);
-    flux_right.resize(num_variables);
-    while (t < tStop)
+    step = 0;
+ 
+    while ((t < tStop) && (step < nSteps))
     {
         a_max = maximal_v(u);
         dt = C * dx / a_max;
@@ -657,72 +749,14 @@ int main(int argc, char *argv[])
         {
             dt = tStop - t;
         }     
-        //std::cout << dt << std::endl; 
-
-        find_deltas(u, between_deltas, center_deltas);
-        //std::cout << "Deltas ";
-        //find_limiters(between_deltas, limiters);
-        find_limiters(u, limiters);
-        //std::cout << "limiters\n";
-        //debug_result(limiters);
-
-        double  change;
-        for (int i = 0; i < (nPoints + (2*padding)); i++)
-        {
-            for (int j = 0; j < num_variables; j++)
-            {
-                change = 0.5*(limiters[i][j] * center_deltas[i][j]);
-                //std::cout << change << " ";
-                u_left[i][j] = u[i][j] - change; 
-                u_right[i][j] = u[i][j] + change;
-            }
-            //std::cout << std::endl;
-        }
-        //debug_result(u);
-        //debug_result(u_left);
-        if (use_halfstep)
-        {
-            for (int i = 0; i < nPoints; i++)
-            {
-                flux_left = flux(u_left[i + padding]);
-                flux_right = flux(u_right[i + padding]);
-                for (int j = 0; j < num_variables; j++)
-                {
-                    change = (flux_right[j] - flux_left[j]) * dt / dx / 2.0;
-                    uPlusOne_left[i+padding][j] = u_left[i+padding][j] - change;
-                    uPlusOne_right[i+padding][j] = u_right[i+padding][j] - change;
-                }
-            }
-            for (int i = 0; i < padding; i++)
-            {
-                for (int j = 0; j < num_variables; j++)
-                {
-                    uPlusOne_left[i][j] = u_left[i][j];
-                    uPlusOne_right[i][j] = u_right[i][j];
-                    uPlusOne_right[nPoints+padding + i][j] = u_right[nPoints+padding+i][j];
-                    uPlusOne_left[nPoints+padding + i][j] = u_left[nPoints+padding+i][j];
-                }
-            }
-            u_left = uPlusOne_left;
-            u_right = uPlusOne_right;  
-        }
-        //boundary_condition(u_left, padding);
-        //boundary_condition(u_right, padding);
-        //debug_result(u_left);
-        //debug_result(u_right);
-
-        evaluate_flux(u_left, u_right, f, dx, dt);
-
-        //debug_result(f);
-
-        //std::cout << "Flux evaluated\n";
-
-        u = PDE_Step(u, f, dt, padding);
-
-        //print_result(u);
-        //std::cout << "PDE Step done\n";
+        
+        SLICK_Step(u, f, dx, dt);
 
         t = t + dt;
+        if (step % 100 == 0)
+        {
+            std::cout << step << " " << t <<"\n";
+        }
         step += 1;
     }
 
