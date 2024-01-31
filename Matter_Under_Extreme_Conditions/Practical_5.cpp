@@ -339,7 +339,7 @@ vector<double> flux(int direction, const vector<double> & state)
         for (int i = 0; i < 3; i++)
         {
             result[i+1] = state[direction]*v[i] - state[direction+3]*state[i+4];
-            result[i+4] = state[i+4]*state[direction]/rho - state[direction+3]*state[i+1]/rho;
+            result[i+4] = state[i+4]*v[direction-1] - state[direction+3]*v[i];
         }
         result[direction] += p + B_2;
         result[num_variables-1] = (state[num_variables-1] + p + B_2) * v[direction-1];
@@ -579,7 +579,7 @@ void SLICK_Step(int direction, vector<vector<double>> &current, vector<vector<do
 
     for (int i = 0; i < (nPoints + (2*padding) - 1); i++)
     {
-        fluxes[i] = nummerical_flux(direction, u_plus[i], u_minus[i + 1], space_step, time_step);
+        fluxes[i] = FORCE_flux(direction, u_plus[i], u_minus[i + 1], space_step, time_step);
     }
     
     for (int index_x = padding; index_x < (nPoints + padding); index_x++)
@@ -590,7 +590,6 @@ void SLICK_Step(int direction, vector<vector<double>> &current, vector<vector<do
         }
     }
     boundary_condition(current, padding);
-
 }
 
 

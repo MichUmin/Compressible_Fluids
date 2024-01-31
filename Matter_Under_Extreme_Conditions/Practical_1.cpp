@@ -398,7 +398,6 @@ double maximal_v(table<vector<double>>& values)
                 v_c = vec_len(v) + cs;
                 if (v_c > result)
                 {
-                    //std::cout << v_c << " " << cs << std::endl;
                     result = v_c;
                 }
             }
